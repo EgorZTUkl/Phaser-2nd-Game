@@ -1,156 +1,203 @@
 require 'gosu'
 
-class Background
-  def initialize
-    @image = Gosu::Image.new("background.png", tileable: true)
-    @width = @image.width
-    @height = @image.height
-    @x = 0
-    @y = 0
-  end
-
-  def draw(camera_x, camera_y)
-    @image.draw(@x - camera_x % @width, @y - camera_y % @height, 0, 1, 1, Gosu::Color::WHITE)
-    @image.draw(@x - camera_x % @width + @width, @y - camera_y % @height, 0, 1, 1, Gosu::Color::WHITE)
-    @image.draw(@x - camera_x % @width, @y - camera_y % @height + @height, 0, 1, 1, Gosu::Color::WHITE)
-    @image.draw(@x - camera_x % @width + @width, @y - camera_y % @height + @height, 0, 1, 1, Gosu::Color::WHITE)
-  end
-end
-
 class Platform
   attr_reader :x, :y, :width, :height
 
   def initialize(x, y, width, height)
-    @x = x
-    @y = y
-    @width = width
-    @height = height
+    @x, @y, @width, @height = x, y, width, height
   end
 
-  def draw(camera_x, camera_y)
-    # Рисуем платформу
-    Gosu.draw_rect(@x - camera_x, @y - camera_y, @width, @height, Gosu::Color::GREEN)
-
-    # Рисуем хитбокс
-    Gosu.draw_rect(@x - camera_x, @y - camera_y, @width, @height, Gosu::Color::BLUE, 999)
-  end
-
-  def hitbox
-    { x: @x, y: @y, width: @width, height: @height }
+  def draw
+    Gosu.draw_rect(@x, @y, @width, @height, Gosu::Color::GREEN)
   end
 end
 
 class Player
-  attr_reader :x, :y, :width, :height, :jumping
+  attr_reader :x, :y, :width, :height, :lives
 
   def initialize
-    @x = 50
-    @y = 1080 - 10
-    @width = 50
-    @height = 50
-    @vel_x = 0
-    @vel_y = 0
-    @jumping = false
-    @image = Gosu::Image.new("player.png")
+    @x, @y, @width, @height = 320, 240, 32, 48
+    @vel_x, @vel_y = 0, 0
+    @jumping, @jump_power, @gravity = false, -20, 1
+    @lives = 3
   end
 
-  def draw(camera_x)
-    @image.draw(@x - camera_x, @y, 1)
-    draw_hitbox(camera_x)
-  end
+  def move_left; @vel_x = -10; end
+  def move_right; @vel_x = 10; end
+  def stop; @vel_x = 0; end
+  def jump; @vel_y = @jump_power unless @jumping; @jumping = true; end
 
-  def draw_hitbox(camera_x)
-    hitbox = { x: @x + 10 - camera_x, y: @y + 10, width: @width - 20, height: @height - 10 }
-    Gosu.draw_rect(hitbox[:x], hitbox[:y], hitbox[:width], hitbox[:height], Gosu::Color::BLUE, 999)
-  end
+  def apply_gravity; @vel_y += @gravity; end
 
-  def move_left
-    @vel_x = -5
-  end
+  def update(platforms)
+    @x += @vel_x; @y += @vel_y
 
-  def move_right
-    @vel_x = 5
-  end
-
-  def jump
-    unless @jumping
-      @vel_y = -10
-      @jumping = true
+    platforms.each do |platform|
+      if @x + @width > platform.x && @x < platform.x + platform.width &&
+         @y + @height > platform.y && @y < platform.y + platform.height
+        @vel_y = 0; @jumping = false; @y = platform.y - @height
+      end
     end
+
+    @vel_x = 0 if @x < 0 || @x + @width > 1920
+  end
+
+  def draw
+    Gosu.draw_rect(@x, @y, @width, @height, Gosu::Color::BLUE)
+  end
+end
+
+class Bomb
+  attr_reader :x, :y, :width, :height, :vel_y
+
+  def initialize(x, y)
+    @x, @y, @width, @height = x, y, 20, 20
+    @vel_y = rand(2..5)
+    @gravity = 1
   end
 
   def update(platforms)
-    @x += @vel_x
     @y += @vel_y
-    @vel_x = 0
-    if @y < 480 - @image.height
-      @vel_y += 0.5
-    else
-      @vel_y = 0
-      @jumping = false
-      @y = 480 - @image.height
-    end
-
-    platforms.each do |platform|
-      if collides_with?(platform.hitbox)
-        if @vel_y > 0
-          @y = platform.y - @height
-          @jumping = false
-          @vel_y = 0
-        elsif @vel_y < 0
-          @y = platform.y + platform.height
-          @vel_y = 0
-        end
-      end
-    end
+    @vel_y += @gravity
+    @vel_y *= -1 if @y > 1080
+    platforms.each { |platform| bounce_off_platform(platform) }
   end
 
-  def collides_with?(object)
-    player_hitbox = { x: @x + 10, y: @y + 10, width: @width - 20, height: @height - 10 }
-    player_hitbox[:x] < object[:x] + object[:width] &&
-      player_hitbox[:x] + player_hitbox[:width] > object[:x] &&
-      player_hitbox[:y] < object[:y] + object[:height] &&
-      player_hitbox[:y] + player_hitbox[:height] > object[:y]
+  def draw
+    Gosu.draw_rect(@x, @y, @width, @height, Gosu::Color::RED)
+  end
+
+  private
+
+  def bounce_off_platform(platform)
+    if @x + @width > platform.x && @x < platform.x + platform.width &&
+       @y + @height > platform.y && @y < platform.y + platform.height
+      @vel_y *= -1
+      @y = platform.y - @height
+    end
+  end
+end
+
+class Enemy
+  attr_reader :x, :y, :width, :height
+
+  def initialize
+    @x, @y, @width, @height = rand(1920), rand(1080), 30, 30
+    @vel_x, @vel_y = rand(-3..3), rand(-3..3)
+  end
+
+  def update
+    @x += @vel_x
+    @y += @vel_y
+    @vel_x *= -1 if @x < 0 || @x + @width > 1920
+    @vel_y *= -1 if @y < 0 || @y + @height > 1080
+  end
+
+  def draw
+    Gosu.draw_rect(@x, @y, @width, @height, Gosu::Color::RED)
   end
 end
 
 class GameWindow < Gosu::Window
   def initialize
     super(1920, 1080, false)
-    self.caption = "My Platformer Game"
-    @background = Background.new
+    self.caption = 'Simple Platformer'
+
     @player = Player.new
+    @platforms = []
+    generate_platforms
+
+    @bombs = Array.new(5) { Bomb.new(rand(1920), rand(1080)) }
+    @enemies = Array.new(3) { Enemy.new }
+    @font = Gosu::Font.new(20)
+
     @camera_x = 0
-    @camera_y = -1000  # Поднимаем камеру на 1000 пикселей
-    @platforms = [
-      Platform.new(960, 0, 640, 20),  # Платформа на всю ширину экрана, внизу
-      Platform.new(300, 0, 200, 20),        # Первая платформа выше
-      Platform.new(1200, 0, 300, 20)        # Вторая платформа еще выше
-    ]
   end
 
   def update
-    @player.move_left if Gosu.button_down? Gosu::KB_LEFT
-    @player.move_right if Gosu.button_down? Gosu::KB_RIGHT
-    @player.jump if Gosu.button_down? Gosu::KB_SPACE
+    update_player_movement
+    @player.apply_gravity
     @player.update(@platforms)
+    update_bombs
+    update_enemies
+    check_collisions
+    check_game_over
 
-    # Перемещаем камеру только по горизонтали, если персонаж находится в определенной части экрана
-    if @player.x > 320 && @player.x < 1280
-      @camera_x = @player.x - 320
-    elsif @player.x >= 1280
-      @camera_x = 1920 - 640
-    else
-      @camera_x = 0
-    end
+    @camera_x += 5
   end
 
   def draw
-    @background.draw(@camera_x, @camera_y)
-    @player.draw(@camera_x)
-    @platforms.each { |platform| platform.draw(@camera_x, @camera_y) }
+    Gosu.translate(-@camera_x, 0) do
+      @player.draw
+      @platforms.each(&:draw)
+      @bombs.each(&:draw)
+      @enemies.each(&:draw)
+    end
+
+    @font.draw("Lives: #{@player.lives}", 10, 10, 1)
+  end
+
+  private
+
+  def generate_platforms
+    last_x = 0
+    while last_x < 5000
+      width = rand(100..300)
+      height = rand(20..100)
+      @platforms << Platform.new(last_x, 1000 - height, width, height)
+      last_x += width + rand(50..200)
+    end
+  end
+
+  def update_player_movement
+    @player.stop
+    @player.move_left if button_down?(Gosu::KB_LEFT)
+    @player.move_right if button_down?(Gosu::KB_RIGHT)
+    @player.jump if button_down?(Gosu::KB_SPACE)
+  end
+
+  def update_bombs
+    @bombs.each { |bomb| bomb.update(@platforms) }
+  end
+
+  def update_enemies
+    @enemies.each(&:update)
+  end
+
+  def check_collisions
+  @bombs.each do |bomb|
+    if bomb.x < @player.x + @player.width && bomb.x + bomb.width > @player.x &&
+       bomb.y < @player.y + @player.height && bomb.y + bomb.height > @player.y
+      @player.lives -= 1
+      bomb.reset(rand(1920), rand(1080))
+      close_game if @player.lives <= 0
+    end
+  end
+
+  @enemies.each do |enemy|
+    if enemy.x < @player.x + @player.width && enemy.x + enemy.width > @player.x &&
+       enemy.y < @player.y + @player.height && enemy.y + enemy.height > @player.y
+      @player.lives -= 1
+      enemy.reset_position
+      close_game if @player.lives <= 0
+    end
   end
 end
 
-window = GameWindow.new
-window.show
+def close_game
+  puts 'Game Over'
+  close
+  exit
+end
+
+  def check_game_over
+     if @player.lives <= 0
+       close
+       puts 'Game Over'
+       exit
+     end
+   end
+ end
+
+ window = GameWindow.new
+ window.show
